@@ -1,4 +1,4 @@
-import { React }  from './adaptation';
+import * as React from 'react';
 import logo from './logo.svg';
 import './App.css';
 
@@ -12,6 +12,15 @@ class App extends React.Component{
     this.setState({
       number: this.state.number + 1
     })
+    this.setState({
+      number: this.state.number + 1
+    })
+  }
+
+  batchedAdd = () => {
+    setTimeout(() => {
+      
+    }, 0);
   }
 
   render() {
@@ -32,6 +41,9 @@ class App extends React.Component{
             Learn React
           </a>
           <button onClick={this.add}>{this.state.number}</button>
+          <button
+            onClick={this.batchedAdd}
+          >{this.state.number}</button>
         </header>
       </div>
     );
