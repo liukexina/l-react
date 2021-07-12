@@ -1033,7 +1033,7 @@ function resumeMountClassInstance(
   return shouldUpdate;
 }
 
-// Invokes the update life-cycles and returns false if it shouldn't rerender.
+// Invokes the update life-cycles and returns false if it shouldn't rerender. 调用更新生命周期，如果不应该重新渲染，则返回false。
 function updateClassInstance(
   current: Fiber,
   workInProgress: Fiber,
@@ -1092,7 +1092,7 @@ function updateClassInstance(
     }
   }
 
-  resetHasForceUpdateBeforeProcessing();
+  resetHasForceUpdateBeforeProcessing(); // 重置forceupdate = false
 
   const oldState = workInProgress.memoizedState;
   let newState = (instance.state = oldState);

@@ -420,13 +420,13 @@ export function processUpdateQueue<State>(
   let firstBaseUpdate = queue.firstBaseUpdate;
   let lastBaseUpdate = queue.lastBaseUpdate;
 
-  // Check if there are pending updates. If so, transfer them to the base queue.
+  // 检查是否有待处理的更新。如果是这样，请将它们转移到基本队列
   let pendingQueue = queue.shared.pending;
   if (pendingQueue !== null) {
     queue.shared.pending = null;
 
     // The pending queue is circular. Disconnect the pointer between first
-    // and last so that it's non-circular.
+    // and last so that it's non-circular. pending队列是循环的，先断开连接，在连接上
     const lastPendingUpdate = pendingQueue;
     const firstPendingUpdate = lastPendingUpdate.next;
     lastPendingUpdate.next = null;
@@ -441,8 +441,8 @@ export function processUpdateQueue<State>(
     // If there's a current queue, and it's different from the base queue, then
     // we need to transfer the updates to that queue, too. Because the base
     // queue is a singly-linked list with no cycles, we can append to both
-    // lists and take advantage of structural sharing.
-    // TODO: Pass `current` as argument
+    // lists and take advantage of structural sharing. 如果当前队列与基本队列不同，则我们也需要将更新转移到该队列
+    // TODO: Pass `current` as argument  
     const current = workInProgress.alternate;
     if (current !== null) {
       // This is always non-null on a ClassComponent or HostRoot
@@ -459,10 +459,10 @@ export function processUpdateQueue<State>(
     }
   }
 
-  // These values may change as we process the queue.
+  // These values may change as we process the queue. 这些值在我们处理队列时可能会更改。
   if (firstBaseUpdate !== null) {
-    // Iterate through the list of updates to compute the result.
-    let newState = queue.baseState;
+    // Iterate through the list of updates to compute the result. 遍历更新列表以计算结果。
+    let newState = queue.baseState;  
     // TODO: Don't need to accumulate this. Instead, we can remove renderLanes
     // from the original lanes.
     let newLanes = NoLanes;
@@ -478,7 +478,7 @@ export function processUpdateQueue<State>(
       if (!isSubsetOfLanes(renderLanes, updateLane)) {
         // Priority is insufficient. Skip this update. If this is the first
         // skipped update, the previous update/state is the new base
-        // update/state.
+        // update/state.  优先级不足 跳过此更新如果这是第一个跳过更新，以前的更新/状态是新的基础更新/状态。
         const clone: Update<State> = {
           eventTime: updateEventTime,
           lane: updateLane,

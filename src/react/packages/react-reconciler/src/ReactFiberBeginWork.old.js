@@ -3092,8 +3092,8 @@ function beginWork(
     ) {
       // If props or context changed, mark the fiber as having performed work.
       // This may be unset if the props are determined to be equal later (memo).
-      didReceiveUpdate = true;
-    } else if (!includesSomeLane(renderLanes, updateLanes)) {
+      didReceiveUpdate = true;  // didReceiveUpdate 表示可以复用 current Fiber Tree
+    } else if (!includesSomeLane(renderLanes, updateLanes)) {  // 更新的优先级 和 current tree优先级是否一致，如果不一致，则触发
       didReceiveUpdate = false;
       // This fiber does not have any pending work. Bailout without entering
       // the begin phase. There's still some bookkeeping we that needs to be done
