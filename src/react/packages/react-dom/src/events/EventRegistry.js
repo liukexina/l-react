@@ -9,10 +9,19 @@
 
 import type {DOMEventName} from './DOMEventNames';
 
+import {enableCreateEventHandleAPI} from 'shared/ReactFeatureFlags';
+
+export const allNativeEvents: Set<DOMEventName> = new Set();  // 所有有意义的原生事件名称集合
+
+if (enableCreateEventHandleAPI) {
+  allNativeEvents.add('beforeblur');
+  allNativeEvents.add('afterblur');
+}
+
 /**
  * Mapping from registration name to event name
  */
-export const registrationNameDependencies = {};
+export const registrationNameDependencies = {};  // 合成事件和其依赖的原生事件集合的映射
 
 /**
  * Mapping from lowercase registration names to the properly cased version,
@@ -25,15 +34,15 @@ export const possibleRegistrationNames = __DEV__ ? {} : (null: any);
 
 export function registerTwoPhaseEvent(
   registrationName: string,
-  dependencies: ?Array<DOMEventName>,
+  dependencies: Array<DOMEventName>,
 ): void {
-  registerDirectEvent(registrationName, dependencies);
-  registerDirectEvent(registrationName + 'Capture', dependencies);
+  registerDirectEvent(registrationName, dependencies);             // 冒泡
+  registerDirectEvent(registrationName + 'Capture', dependencies); // 捕获
 }
 
 export function registerDirectEvent(
   registrationName: string,
-  dependencies: ?Array<DOMEventName>,
+  dependencies: Array<DOMEventName>,
 ) {
   if (__DEV__) {
     if (registrationNameDependencies[registrationName]) {
@@ -54,5 +63,9 @@ export function registerDirectEvent(
     if (registrationName === 'onDoubleClick') {
       possibleRegistrationNames.ondblclick = registrationName;
     }
+  }
+
+  for (let i = 0; i < dependencies.length; i++) {
+    allNativeEvents.add(dependencies[i]);
   }
 }

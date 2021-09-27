@@ -88,9 +88,10 @@ export type RefObject = {|
 
 export type EventPriority = 0 | 1 | 2;
 
-export const DiscreteEvent: EventPriority = 0;
-export const UserBlockingEvent: EventPriority = 1;
-export const ContinuousEvent: EventPriority = 2;
+export const DiscreteEvent: EventPriority = 0;   // 离散事件，cancel、click、mousedown 这类单点触发不持续的事件，优先级最低
+export const UserBlockingEvent: EventPriority = 1;  // 用户阻塞事件，drag、mousemove、wheel 这类持续触发的事件，优先级相对较高
+export const ContinuousEvent: EventPriority = 2;  // 连续事件，load、error、waiting 这类大多与媒体相关的事件为主的事件需要及时响应，所以优先级最高
+
 
 export type ReactFundamentalComponentInstance<C, H> = {|
   currentFiber: Object,

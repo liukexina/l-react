@@ -76,11 +76,11 @@ export function batchedEventUpdates(fn, a, b) {
 }
 
 export function discreteUpdates(fn, a, b, c, d) {
-  const prevIsInsideEventHandler = isInsideEventHandler;
+  const prevIsInsideEventHandler = isInsideEventHandler;  // 标记当前正在事件处理过程中，并存储之前的状态
   isInsideEventHandler = true;
   try {
-    return discreteUpdatesImpl(fn, a, b, c, d);
-  } finally {
+    return discreteUpdatesImpl(fn, a, b, c, d);  // 调用 Scheduler 里的离散更新函数
+  } finally {  // 如果之前就处于事件处理过程中，则继续完成
     isInsideEventHandler = prevIsInsideEventHandler;
     if (!isInsideEventHandler) {
       finishEventHandler();

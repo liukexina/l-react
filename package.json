@@ -1,14 +1,14 @@
 {
-  "name": "l-react",
+  "name": "debug-react-v17",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
     "@babel/core": "7.12.3",
     "@pmmmwh/react-refresh-webpack-plugin": "0.4.2",
     "@svgr/webpack": "5.4.0",
-    "@testing-library/jest-dom": "^5.11.4",
-    "@testing-library/react": "^11.1.0",
-    "@testing-library/user-event": "^12.1.10",
+    "@testing-library/jest-dom": "^5.11.9",
+    "@testing-library/react": "^11.2.3",
+    "@testing-library/user-event": "^12.6.0",
     "@typescript-eslint/eslint-plugin": "^4.5.0",
     "@typescript-eslint/parser": "^4.5.0",
     "babel-eslint": "^10.1.0",
@@ -110,7 +110,7 @@
       "<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}"
     ],
     "testEnvironment": "jsdom",
-    "testRunner": "/Users/lkx/Documents/code/l-react/node_modules/jest-circus/runner.js",
+    "testRunner": "/Users/wxj/locality/debug-react-v17/node_modules/jest-circus/runner.js",
     "transform": {
       "^.+\\.(js|jsx|mjs|cjs|ts|tsx)$": "<rootDir>/node_modules/babel-jest",
       "^.+\\.css$": "<rootDir>/config/jest/cssTransform.js",
@@ -147,10 +147,5 @@
     "presets": [
       "react-app"
     ]
-  },
-  "devDependencies": {
-    "@babel/plugin-syntax-jsx": "^7.12.1",
-    "@babel/plugin-transform-flow-strip-types": "^7.12.10",
-    "eslint-plugin-no-for-of-loops": "^1.0.1"
   }
 }

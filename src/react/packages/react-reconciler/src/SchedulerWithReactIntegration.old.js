@@ -143,11 +143,11 @@ export function scheduleCallback(
 
 export function scheduleSyncCallback(callback: SchedulerCallback) {
   // Push this callback into an internal queue. We'll flush these either in
-  // the next tick, or earlier if something calls `flushSyncCallbackQueue`. 将此回调推送到内部队列中。我们将在下一个滴答中或更早地刷新它们（如果有人调用`flushSyncCallbackQueue`）
+  // the next tick, or earlier if something calls `flushSyncCallbackQueue`.
   if (syncQueue === null) {
-    syncQueue = [callback];  // 同步渲染，将 performSyncWorkOnRoot添加至syncQueue中，
-    // Flush the queue in the next tick, at the earliest.     最早下一个任务flush队列  如果是首次添加，则同异步一样，调用Scheduler_scheduleCallback。优先级为Scheduler_ImmediatePriority。
-    immediateQueueCallbackNode = Scheduler_scheduleCallback(  // Scheduler的入口函数unstable_scheduleCallback。该函数的将会计算任务的开始时间、过期时间、生成任务并将任务放入任务队列。
+    syncQueue = [callback];
+    // Flush the queue in the next tick, at the earliest.
+    immediateQueueCallbackNode = Scheduler_scheduleCallback(
       Scheduler_ImmediatePriority,
       flushSyncCallbackQueueImpl,
     );
@@ -166,7 +166,7 @@ export function cancelCallback(callbackNode: mixed) {
 }
 
 export function flushSyncCallbackQueue() {
-  if (immediateQueueCallbackNode !== null) {  // 如果即时节点存在则中断当前节点任务，从链表中移除task节点
+  if (immediateQueueCallbackNode !== null) {
     const node = immediateQueueCallbackNode;
     immediateQueueCallbackNode = null;
     Scheduler_cancelCallback(node);
@@ -175,8 +175,8 @@ export function flushSyncCallbackQueue() {
 }
 
 function flushSyncCallbackQueueImpl() {
-  if (!isFlushingSyncQueue && syncQueue !== null) {  // isFlushingSyncQueue 是标志位，标志当前方法是否正在进行，相当于锁
-    // Prevent re-entrancy. 防止多次执行
+  if (!isFlushingSyncQueue && syncQueue !== null) {
+    // Prevent re-entrancy.
     isFlushingSyncQueue = true;
     let i = 0;
     if (decoupleUpdatePriorityFromScheduler) {
@@ -213,7 +213,7 @@ function flushSyncCallbackQueueImpl() {
       try {
         const isSync = true;
         const queue = syncQueue;
-        runWithPriority(ImmediatePriority, () => {  // 遍历同步队列，并更新刷新的状态isSync=true
+        runWithPriority(ImmediatePriority, () => {
           for (; i < queue.length; i++) {
             let callback = queue[i];
             do {
@@ -221,7 +221,7 @@ function flushSyncCallbackQueueImpl() {
             } while (callback !== null);
           }
         });
-        syncQueue = null;  // 遍历结束后置为null
+        syncQueue = null;
       } catch (error) {
         // If something throws, leave the remaining callbacks on the queue.
         if (syncQueue !== null) {

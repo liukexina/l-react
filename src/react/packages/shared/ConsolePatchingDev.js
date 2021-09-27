@@ -27,7 +27,7 @@ disabledLog.__reactDisabledLog = true;
 export function disableLogs(): void {
   if (__DEV__) {
     if (disabledDepth === 0) {
-
+      /* eslint-disable  */
       prevLog = console.log;
       prevInfo = console.info;
       prevWarn = console.warn;
@@ -52,7 +52,7 @@ export function disableLogs(): void {
         groupCollapsed: props,
         groupEnd: props,
       });
-
+      /* eslint-enable  */
     }
     disabledDepth++;
   }
@@ -62,7 +62,7 @@ export function reenableLogs(): void {
   if (__DEV__) {
     disabledDepth--;
     if (disabledDepth === 0) {
-
+      /* eslint-disable  */
       const props = {
         configurable: true,
         enumerable: true,
@@ -78,7 +78,7 @@ export function reenableLogs(): void {
         groupCollapsed: {...props, value: prevGroupCollapsed},
         groupEnd: {...props, value: prevGroupEnd},
       });
-
+      /* eslint-enable  */
     }
     if (disabledDepth < 0) {
       console.error(

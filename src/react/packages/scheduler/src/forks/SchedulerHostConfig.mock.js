@@ -192,7 +192,7 @@ export function unstable_flushAll(): void {
 }
 
 export function unstable_yieldValue(value: mixed): void {
-  // eslint-disable-next-line react-internal/no-production-logging
+  
   if (console.log.name === 'disabledLog') {
     // If console.log has been patched, we assume we're in render
     // replaying and we ignore any values yielding in the second pass.
@@ -206,7 +206,7 @@ export function unstable_yieldValue(value: mixed): void {
 }
 
 export function unstable_advanceTime(ms: number) {
-  // eslint-disable-next-line react-internal/no-production-logging
+  
   if (console.log.name === 'disabledLog') {
     // If console.log has been patched, we assume we're in render
     // replaying and we ignore any time advancing in the second pass.

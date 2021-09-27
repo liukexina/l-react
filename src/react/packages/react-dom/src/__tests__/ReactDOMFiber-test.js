@@ -1040,6 +1040,25 @@ describe('ReactDOMFiber', () => {
     expect(ops).toEqual([]);
   });
 
+  // @gate enableEagerRootListeners
+  it('listens to events that do not exist in the Portal subtree', () => {
+    const onClick = jest.fn();
+
+    const ref = React.createRef();
+    ReactDOM.render(
+      <div onClick={onClick}>
+        {ReactDOM.createPortal(<button ref={ref}>click</button>, document.body)}
+      </div>,
+      container,
+    );
+    const event = new MouseEvent('click', {
+      bubbles: true,
+    });
+    ref.current.dispatchEvent(event);
+
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it('should throw on bad createPortal argument', () => {
     expect(() => {
       ReactDOM.createPortal(<div>portal</div>, null);
@@ -1078,6 +1097,8 @@ describe('ReactDOMFiber', () => {
   });
 
   it('should not update event handlers until commit', () => {
+    spyOnDev(console, 'error');
+
     let ops = [];
     const handlerA = () => ops.push('A');
     const handlerB = () => ops.push('B');
@@ -1110,11 +1131,7 @@ describe('ReactDOMFiber', () => {
     class Click extends React.Component {
       constructor() {
         super();
-        expect(() => {
-          node.click();
-        }).toErrorDev(
-          'Warning: unstable_flushDiscreteUpdates: Cannot flush updates when React is already rendering.',
-        );
+        node.click();
       }
       render() {
         return null;
@@ -1164,6 +1181,16 @@ describe('ReactDOMFiber', () => {
     // Any click that happens after commit, should invoke A.
     click();
     expect(ops).toEqual(['A']);
+
+    if (__DEV__) {
+      // TODO: this warning shouldn't be firing in the first place if user didn't call it.
+      const errorCalls = console.error.calls.count();
+      for (let i = 0; i < errorCalls; i++) {
+        expect(console.error.calls.argsFor(i)[0]).toMatch(
+          'unstable_flushDiscreteUpdates: Cannot flush updates when React is already rendering.',
+        );
+      }
+    }
   });
 
   it('should not crash encountering low-priority tree', () => {

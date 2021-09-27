@@ -28,18 +28,18 @@ import {enableCreateEventHandleAPI} from 'shared/ReactFeatureFlags';
 export const topLevelEventsToReactNames: Map<
   DOMEventName,
   string | null,
-> = new Map();
+> = new Map();   // 原生事件和合成事件的映射
 
-const eventPriorities = new Map();
+const eventPriorities = new Map();  // 原生事件及其优先级的映射
 
-// We store most of the events in this module in pairs of two strings so we can re-use
-// the code required to apply the same logic for event prioritization and that of the
-// SimpleEventPlugin. This complicates things slightly, but the aim is to reduce code
-// duplication (for which there would be quite a bit). For the events that are not needed
-// for the SimpleEventPlugin (otherDiscreteEvents) we process them separately as an
-// array of top level events.
+//我们将此模块中的大多数事件以两个字符串成对存储，以便可以重用
+//将相同的逻辑应用于事件优先级排序和
+//SimpleEventPlugin公司。这使事情稍微复杂一些，但目的是减少代码
+//重复（会有相当多的重复）。对于不需要的事件
+//对于SimpleEventPlugin（otherDiscreteEvents），我们将它们作为
+//顶级事件的数组。
 
-// Lastly, we ignore prettier so we can keep the formatting sane.
+//最后，我们忽略了更漂亮的，这样我们可以保持格式正常。
 
 // prettier-ignore
 const discreteEventPairsForSimpleEventPlugin = [
@@ -89,6 +89,10 @@ const otherDiscreteEvents: Array<DOMEventName> = [
 ];
 
 if (enableCreateEventHandleAPI) {
+  // Special case: these two events don't have on* React handler
+  // and are only accessible via the createEventHandle API.
+  topLevelEventsToReactNames.set('beforeblur', null);
+  topLevelEventsToReactNames.set('afterblur', null);
   otherDiscreteEvents.push('beforeblur', 'afterblur');
 }
 
@@ -167,9 +171,9 @@ function registerSimplePluginEventsAndSetTheirPriorities(
     const event = ((eventTypes[i + 1]: any): string);
     const capitalizedEvent = event[0].toUpperCase() + event.slice(1);
     const reactName = 'on' + capitalizedEvent;
-    eventPriorities.set(topEvent, priority);
-    topLevelEventsToReactNames.set(topEvent, reactName);
-    registerTwoPhaseEvent(reactName, [topEvent]);
+    eventPriorities.set(topEvent, priority);    // 原生事件及其优先级的映射
+    topLevelEventsToReactNames.set(topEvent, reactName);    // 原生事件和合成事件的映射
+    registerTwoPhaseEvent(reactName, [topEvent]);    // 注册捕获和冒泡两个阶段的事件
   }
 }
 
@@ -201,23 +205,24 @@ export function getEventPriorityForListenerSystem(
   }
   if (__DEV__) {
     console.warn(
-      'The event "type" provided to createEventHandle() does not have a known priority type.' +
-        ' It is recommended to provide a "priority" option to specify a priority.',
+      'The event "%s" provided to createEventHandle() does not have a known priority type.' +
+        ' This is likely a bug in React.',
+      type,
     );
   }
   return ContinuousEvent;
 }
 
-export function registerSimpleEvents() {
+export function registerSimpleEvents() {  // 离散事件注册
   registerSimplePluginEventsAndSetTheirPriorities(
     discreteEventPairsForSimpleEventPlugin,
     DiscreteEvent,
   );
-  registerSimplePluginEventsAndSetTheirPriorities(
+  registerSimplePluginEventsAndSetTheirPriorities(  // 用户阻塞事件注册
     userBlockingPairsForSimpleEventPlugin,
     UserBlockingEvent,
   );
-  registerSimplePluginEventsAndSetTheirPriorities(
+  registerSimplePluginEventsAndSetTheirPriorities(  // 连续事件注册
     continuousPairsForSimpleEventPlugin,
     ContinuousEvent,
   );

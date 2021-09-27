@@ -17,9 +17,14 @@ const __DEV__ = NODE_ENV === 'development';
 
 const DEVTOOLS_VERSION = getVersionString();
 
+// This targets RN/Hermes.
+process.env.BABEL_CONFIG_ADDITIONAL_TARGETS = JSON.stringify({
+  ie: '11',
+});
+
 module.exports = {
   mode: __DEV__ ? 'development' : 'production',
-  devtool: __DEV__ ? 'cheap-module-eval-source-map' : false,
+  devtool: __DEV__ ? 'cheap-module-eval-source-map' : 'source-map',
   entry: {
     backend: './src/backend.js',
   },

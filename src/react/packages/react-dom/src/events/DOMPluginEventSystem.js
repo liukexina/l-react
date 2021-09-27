@@ -15,12 +15,13 @@ import {
   SHOULD_NOT_PROCESS_POLYFILL_EVENT_PLUGINS,
 } from './EventSystemFlags';
 import type {AnyNativeEvent} from './PluginModuleType';
-import type {ReactSyntheticEvent} from './ReactSyntheticEventType';
-import type {ElementListenerMapEntry} from '../client/ReactDOMComponentTree';
-import type {EventPriority} from 'shared/ReactTypes';
+import type {
+  KnownReactSyntheticEvent,
+  ReactSyntheticEvent,
+} from './ReactSyntheticEventType';
 import type {Fiber} from 'react-reconciler/src/ReactInternalTypes';
 
-import {registrationNameDependencies} from './EventRegistry';
+import {registrationNameDependencies, allNativeEvents} from './EventRegistry';
 import {
   IS_CAPTURE_PHASE,
   IS_EVENT_HANDLE_NON_MANAGED_NODE,
@@ -38,7 +39,7 @@ import {
 import getEventTarget from './getEventTarget';
 import {
   getClosestInstanceFromNode,
-  getEventListenerMap,
+  getEventListenerSet,
   getEventHandlerListeners,
 } from '../client/ReactDOMComponentTree';
 import {COMMENT_NODE} from '../shared/HTMLNodeType';
@@ -50,11 +51,13 @@ import {
   enableLegacyFBSupport,
   enableCreateEventHandleAPI,
   enableScopeAPI,
+  enableEagerRootListeners,
 } from 'shared/ReactFeatureFlags';
 import {
   invokeGuardedCallbackAndCatchFirstError,
   rethrowCaughtError,
 } from 'shared/ReactErrorUtils';
+import {DOCUMENT_NODE} from '../shared/HTMLNodeType';
 import {createEventListenerWrapperWithPriority} from './ReactDOMEventListener';
 import {
   removeEventListener,
@@ -63,7 +66,6 @@ import {
   addEventBubbleListenerWithPassiveFlag,
   addEventCaptureListenerWithPassiveFlag,
 } from './EventListener';
-import {topLevelEventsToReactNames} from './DOMEventProperties';
 import * as BeforeInputEventPlugin from './plugins/BeforeInputEventPlugin';
 import * as ChangeEventPlugin from './plugins/ChangeEventPlugin';
 import * as EnterLeaveEventPlugin from './plugins/EnterLeaveEventPlugin';
@@ -84,11 +86,11 @@ type DispatchEntry = {|
 export type DispatchQueue = Array<DispatchEntry>;
 
 // TODO: remove top-level side effect.
-SimpleEventPlugin.registerEvents();
-EnterLeaveEventPlugin.registerEvents();
-ChangeEventPlugin.registerEvents();
-SelectEventPlugin.registerEvents();
-BeforeInputEventPlugin.registerEvents();
+SimpleEventPlugin.registerEvents();    // 合成事件系统的基本功能实现
+EnterLeaveEventPlugin.registerEvents();  // 它的 polyfill
+ChangeEventPlugin.registerEvents();      // 它的 polyfill
+SelectEventPlugin.registerEvents();      // 它的 polyfill
+BeforeInputEventPlugin.registerEvents(); // 它的 polyfill
 
 function extractEvents(
   dispatchQueue: DispatchQueue,
@@ -173,7 +175,7 @@ function extractEvents(
   }
 }
 
-// List of events that need to be individually attached to media elements.
+// 需要单独附加到媒体元素的事件列表。
 export const mediaEventTypes: Array<DOMEventName> = [
   'abort',
   'canplay',
@@ -202,7 +204,7 @@ export const mediaEventTypes: Array<DOMEventName> = [
 
 // We should not delegate these events to the container, but rather
 // set them on the actual target element itself. This is primarily
-// because these events do not consistently bubble in the DOM.
+// because these events do not consistently bubble in the DOM.  不需要在冒泡阶段进行事件代理（委托）的原生事件名称集合
 export const nonDelegatedEvents: Set<DOMEventName> = new Set([
   'cancel',
   'close',
@@ -235,10 +237,10 @@ function processDispatchQueueItemsInOrder(
 ): void {
   let previousInstance;
   if (inCapturePhase) {
-    for (let i = dispatchListeners.length - 1; i >= 0; i--) {
+    for (let i = dispatchListeners.length - 1; i >= 0; i--) {  //根据事件发生的阶段，按顺序执行事件
       const {instance, currentTarget, listener} = dispatchListeners[i];
       if (instance !== previousInstance && event.isPropagationStopped()) {
-        return;
+        return;  //如果过程中有调用isPropagationStopped就不再往下执行
       }
       executeDispatch(event, listener, currentTarget);
       previousInstance = instance;
@@ -259,26 +261,28 @@ export function processDispatchQueue(
   dispatchQueue: DispatchQueue,
   eventSystemFlags: EventSystemFlags,
 ): void {
-  const inCapturePhase = (eventSystemFlags & IS_CAPTURE_PHASE) !== 0;
-  for (let i = 0; i < dispatchQueue.length; i++) {
-    const {event, listeners} = dispatchQueue[i];
-    processDispatchQueueItemsInOrder(event, listeners, inCapturePhase);
+  const inCapturePhase = (eventSystemFlags & IS_CAPTURE_PHASE) !== 0; // 通过 eventSystemFlags 判断当前事件阶段
+  for (let i = 0; i < dispatchQueue.length; i++) {  // 遍历合成事件
+    const {event, listeners} = dispatchQueue[i];  // 取出其合成 Event 对象及事件集合
+    processDispatchQueueItemsInOrder(event, listeners, inCapturePhase);  // 这个函数就负责事件的调用
+    // 如果是捕获阶段的事件则倒序调用，反之为正序调用，调用时会传入合成 Event 对象
     //  event system doesn't use pooling.
   }
+  // 抛出中间产生的错误
   // This would be a good time to rethrow if any of the event handlers threw.
   rethrowCaughtError();
 }
 
 function dispatchEventsForPlugins(
-  domEventName: DOMEventName,
-  eventSystemFlags: EventSystemFlags,
-  nativeEvent: AnyNativeEvent,
-  targetInst: null | Fiber,
-  targetContainer: EventTarget,
+  domEventName: DOMEventName, // 事件名称
+  eventSystemFlags: EventSystemFlags, // 事件处理阶段，4 = 捕获阶段，0 = 冒泡阶段
+  nativeEvent: AnyNativeEvent, // 监听器的原生入参 Event 对象
+  targetInst: null | Fiber, // event.target 对应的 DOM 节点的 Fiber 节点
+  targetContainer: EventTarget, // 根 DOM 节点
 ): void {
-  const nativeEventTarget = getEventTarget(nativeEvent);
-  const dispatchQueue: DispatchQueue = [];
-  extractEvents(
+  const nativeEventTarget = getEventTarget(nativeEvent); // 获取了一遍 event.target
+  const dispatchQueue: DispatchQueue = [];  // 事件队列，收集到的事件都会存储到这
+  extractEvents(  // 收集事件
     dispatchQueue,
     domEventName,
     targetInst,
@@ -287,16 +291,7 @@ function dispatchEventsForPlugins(
     eventSystemFlags,
     targetContainer,
   );
-  processDispatchQueue(dispatchQueue, eventSystemFlags);
-}
-
-function shouldUpgradeListener(
-  listenerEntry: void | ElementListenerMapEntry,
-  passive: void | boolean,
-): boolean {
-  return (
-    listenerEntry !== undefined && listenerEntry.passive === true && !passive
-  );
+  processDispatchQueue(dispatchQueue, eventSystemFlags);  // 执行事件
 }
 
 export function listenToNonDelegatedEvent(
@@ -304,22 +299,54 @@ export function listenToNonDelegatedEvent(
   targetElement: Element,
 ): void {
   const isCapturePhaseListener = false;
-  const listenerMap = getEventListenerMap(targetElement);
-  const listenerMapKey = getListenerMapKey(
+  const listenerSet = getEventListenerSet(targetElement);
+  const listenerSetKey = getListenerSetKey(
     domEventName,
     isCapturePhaseListener,
   );
-  const listenerEntry = ((listenerMap.get(
-    listenerMapKey,
-  ): any): ElementListenerMapEntry | void);
-  if (listenerEntry === undefined) {
-    const listener = addTrappedEventListener(
+  if (!listenerSet.has(listenerSetKey)) {
+    addTrappedEventListener(
       targetElement,
       domEventName,
       IS_NON_DELEGATED,
       isCapturePhaseListener,
     );
-    listenerMap.set(listenerMapKey, {passive: false, listener});
+    listenerSet.add(listenerSetKey);
+  }
+}
+// listeningMarker 是一个由固定字符加随机字符组成的标识，用于标识节点是否已经以 react 的方式在所有原生事件上添加监听事件
+const listeningMarker =  
+  '_reactListening' +
+  Math.random()
+    .toString(36)
+    .slice(2);
+// 入参 rootContainerElement 由创建 ReactRoot 的函数传入，其内容为 React 应用的根 DOM 节点。
+export function listenToAllSupportedEvents(rootContainerElement: EventTarget) {
+  if (enableEagerRootListeners) {  // enableEagerRootListeners 为固定不变的标识常量，常为 true，可忽略。
+    if ((rootContainerElement: any)[listeningMarker]) {   // 如果已经添加过，则直接跳过，节省一些不必要的工作
+      // Performance optimization: don't iterate through events
+      // for the same portal container or root node more than once.
+      // TODO: once we remove the flag, we may be able to also
+      // remove some of the bookkeeping maps used for laziness.
+      return;
+    }
+    (rootContainerElement: any)[listeningMarker] = true;  // 添加标识
+    allNativeEvents.forEach(domEventName => {     // 遍历所有原生事件
+      if (!nonDelegatedEvents.has(domEventName)) {     // 除了不需要在冒泡阶段添加事件代理的原生事件，仅在捕获阶段添加事件代理
+        listenToNativeEvent(
+          domEventName,
+          false,
+          ((rootContainerElement: any): Element),
+          null,
+        );
+      }   // 其余的事件都需要在捕获、冒泡阶段添加代理事件
+      listenToNativeEvent(  
+        domEventName,
+        true,
+        ((rootContainerElement: any): Element),
+        null,
+      );
+    });
   }
 }
 
@@ -328,21 +355,23 @@ export function listenToNativeEvent(
   isCapturePhaseListener: boolean,
   rootContainerElement: EventTarget,
   targetElement: Element | null,
-  isPassiveListener?: boolean,
-  listenerPriority?: EventPriority,
   eventSystemFlags?: EventSystemFlags = 0,
 ): void {
   let target = rootContainerElement;
+
   // selectionchange needs to be attached to the document
-  // otherwise it won't capture incoming events that are only
-  // triggered on the document directly.
-  if (domEventName === 'selectionchange') {
+  // 否则 it won't 捕获 incoming events that are only
+  // 触发 on the document 直接.
+  if (
+    domEventName === 'selectionchange' &&
+    (rootContainerElement: any).nodeType !== DOCUMENT_NODE
+  ) {
     target = (rootContainerElement: any).ownerDocument;
   }
-  // If the event can be delegated (or is capture phase), we can
-  // register it to the root container. Otherwise, we should
-  // register the event to the target element and mark it as
-  // a non-delegated event.
+  // If the event can be 委派 (or is 捕获 phase), we can
+  // register it to the root container根容器. 否则, we should
+  // register the event to the target element目标元素 and mark it as
+  // a 非委托 event.
   if (
     targetElement !== null &&
     !isCapturePhaseListener &&
@@ -363,42 +392,24 @@ export function listenToNativeEvent(
     eventSystemFlags |= IS_NON_DELEGATED;
     target = targetElement;
   }
-  const listenerMap = getEventListenerMap(target);
-  const listenerMapKey = getListenerMapKey(
+  const listenerSet = getEventListenerSet(target);  // target 节点上存了一个 Set 类型的值，内部存储着已经添加监听器的原生事件名称，目的是为了防止重复添加监听器。
+  const listenerSetKey = getListenerSetKey(
     domEventName,
     isCapturePhaseListener,
-  );
-  const listenerEntry = ((listenerMap.get(
-    listenerMapKey,
-  ): any): ElementListenerMapEntry | void);
-  const shouldUpgrade = shouldUpgradeListener(listenerEntry, isPassiveListener);
-
+  ); // 效果：'cancel' -> 'cancel__capture' | 'cancel__bubble'
   // If the listener entry is empty or we should upgrade, then
   // we need to trap an event listener onto the target.
-  if (listenerEntry === undefined || shouldUpgrade) {
-    // If we should upgrade, then we need to remove the existing trapped
-    // event listener for the target container.
-    if (shouldUpgrade) {
-      removeEventListener(
-        target,
-        domEventName,
-        ((listenerEntry: any): ElementListenerMapEntry).listener,
-        isCapturePhaseListener,
-      );
+  if (!listenerSet.has(listenerSetKey)) {  // 如果未绑定则绑定
+    if (isCapturePhaseListener) {  // 在现阶段 eventSystemFlags 入参常为 0，所以可以理解为，
+      eventSystemFlags |= IS_CAPTURE_PHASE;      // 只要是在捕获阶段添加监听器的添加过程中，eventSystemFlags = IS_CAPTURE_PHASE = 1 << 2。
     }
-    if (isCapturePhaseListener) {
-      eventSystemFlags |= IS_CAPTURE_PHASE;
-    }
-    const listener = addTrappedEventListener(
+    addTrappedEventListener(
       target,
       domEventName,
       eventSystemFlags,
       isCapturePhaseListener,
-      false,
-      isPassiveListener,
-      listenerPriority,
     );
-    listenerMap.set(listenerMapKey, {passive: isPassiveListener, listener});
+    listenerSet.add(listenerSetKey);  // 添加至 listenerSet
   }
 }
 
@@ -407,48 +418,52 @@ export function listenToReactEvent(
   rootContainerElement: Element,
   targetElement: Element | null,
 ): void {
-  const dependencies = registrationNameDependencies[reactEvent];
-  const dependenciesLength = dependencies.length;
-  // If the dependencies length is 1, that means we're not using a polyfill
-  // plugin like ChangeEventPlugin, BeforeInputPlugin, EnterLeavePlugin
-  // and SelectEventPlugin. We always use the native bubble event phase for
-  // these plugins and emulate two phase event dispatching. SimpleEventPlugin
-  // always only has a single dependency and SimpleEventPlugin events also
-  // use either the native capture event phase or bubble event phase, there
-  // is no emulation (except for focus/blur, but that will be removed soon).
-  const isPolyfillEventPlugin = dependenciesLength !== 1;
+  if (!enableEagerRootListeners) {
+    const dependencies = registrationNameDependencies[reactEvent];
+    const dependenciesLength = dependencies.length;
+    // If the dependencies length is 1, that means we're not using a polyfill
+    // plugin like ChangeEventPlugin, BeforeInputPlugin, EnterLeavePlugin
+    // and SelectEventPlugin. We always use the native bubble event phase for
+    // these plugins and emulate two phase event dispatching. SimpleEventPlugin
+    // always only has a single dependency and SimpleEventPlugin events also
+    // use either the native capture event phase or bubble event phase, there
+    // is no emulation (except for focus/blur, but that will be removed soon).
+    const isPolyfillEventPlugin = dependenciesLength !== 1;
 
-  if (isPolyfillEventPlugin) {
-    const listenerMap = getEventListenerMap(rootContainerElement);
-    // For optimization, we register plugins on the listener map, so we
-    // don't need to check each of their dependencies each time.
-    if (!listenerMap.has(reactEvent)) {
-      listenerMap.set(reactEvent, null);
-      for (let i = 0; i < dependenciesLength; i++) {
-        listenToNativeEvent(
-          dependencies[i],
-          false,
-          rootContainerElement,
-          targetElement,
-        );
+    if (isPolyfillEventPlugin) {
+      const listenerSet = getEventListenerSet(rootContainerElement);
+      // When eager listeners are off, this Set has a dual purpose: it both
+      // captures which native listeners we registered (e.g. "click__bubble")
+      // and *React* lazy listeners (e.g. "onClick") so we don't do extra checks.
+      // This second usage does not exist in the eager mode.
+      if (!listenerSet.has(reactEvent)) {
+        listenerSet.add(reactEvent);
+        for (let i = 0; i < dependenciesLength; i++) {
+          listenToNativeEvent(
+            dependencies[i],
+            false,
+            rootContainerElement,
+            targetElement,
+          );
+        }
       }
+    } else {
+      const isCapturePhaseListener =
+        reactEvent.substr(-7) === 'Capture' &&
+        // Edge case: onGotPointerCapture and onLostPointerCapture
+        // end with "Capture" but that's part of their event names.
+        // The Capture versions would end with CaptureCapture.
+        // So we have to check against that.
+        // This check works because none of the events we support
+        // end with "Pointer".
+        reactEvent.substr(-14, 7) !== 'Pointer';
+      listenToNativeEvent(
+        dependencies[0],
+        isCapturePhaseListener,
+        rootContainerElement,
+        targetElement,
+      );
     }
-  } else {
-    const isCapturePhaseListener =
-      reactEvent.substr(-7) === 'Capture' &&
-      // Edge case: onGotPointerCapture and onLostPointerCapture
-      // end with "Capture" but that's part of their event names.
-      // The Capture versions would end with CaptureCapture.
-      // So we have to check against that.
-      // This check works because none of the events we support
-      // end with "Pointer".
-      reactEvent.substr(-14, 7) !== 'Pointer';
-    listenToNativeEvent(
-      dependencies[0],
-      isCapturePhaseListener,
-      rootContainerElement,
-      targetElement,
-    );
   }
 }
 
@@ -458,19 +473,37 @@ function addTrappedEventListener(
   eventSystemFlags: EventSystemFlags,
   isCapturePhaseListener: boolean,
   isDeferredListenerForLegacyFBSupport?: boolean,
-  isPassiveListener?: boolean,
-  listenerPriority?: EventPriority,
-): any => void {
+) {  //按照事件名称，划分事件执行的优先级，处理后返回监听函数
   let listener = createEventListenerWrapperWithPriority(
     targetContainer,
     domEventName,
     eventSystemFlags,
-    listenerPriority,
-  );
+  );  // 创建带有优先级的事件监听器，具体内容后面概述
   // If passive option is not supported, then the event will be
   // active and not passive.
-  if (isPassiveListener === true && !passiveBrowserEventsSupported) {
-    isPassiveListener = false;
+
+  /**
+    * 按照
+    * 1. 事件发生的阶段 （设置capture属性）
+    * 2. 是否为touchstart/touchmove/wheel事件（设置passive属性）
+    * 分别绑定监听事件
+    */
+
+  let isPassiveListener = undefined;
+  if (passiveBrowserEventsSupported) {
+    // Browsers introduced an intervention, making these events
+    // passive by default on document. React doesn't bind them
+    // to document anymore, but changing this now would undo
+    // the performance wins from the change. So we emulate
+    // the existing behavior manually on the roots now.
+    // https://github.com/facebook/react/issues/19651
+    if (
+      domEventName === 'touchstart' ||
+      domEventName === 'touchmove' ||
+      domEventName === 'wheel'
+    ) {
+      isPassiveListener = true;
+    }
   }
 
   targetContainer =
@@ -502,8 +535,9 @@ function addTrappedEventListener(
       return originalListener.apply(this, p);
     };
   }
-  if (isCapturePhaseListener) {
-    if (enableCreateEventHandleAPI && isPassiveListener !== undefined) {
+  // TODO: There are too many combinations here. Consolidate them.
+  if (isCapturePhaseListener) {  // 在原生事件上添加不同阶段的事件监听器  节点上添加事件
+    if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventCaptureListenerWithPassiveFlag(
         targetContainer,
         domEventName,
@@ -511,14 +545,14 @@ function addTrappedEventListener(
         isPassiveListener,
       );
     } else {
-      unsubscribeListener = addEventCaptureListener(
+      unsubscribeListener = addEventCaptureListener(   // 捕获
         targetContainer,
         domEventName,
         listener,
       );
     }
   } else {
-    if (enableCreateEventHandleAPI && isPassiveListener !== undefined) {
+    if (isPassiveListener !== undefined) {
       unsubscribeListener = addEventBubbleListenerWithPassiveFlag(
         targetContainer,
         domEventName,
@@ -526,14 +560,13 @@ function addTrappedEventListener(
         isPassiveListener,
       );
     } else {
-      unsubscribeListener = addEventBubbleListener(
+      unsubscribeListener = addEventBubbleListener(   // 冒泡
         targetContainer,
         domEventName,
         listener,
       );
     }
   }
-  return unsubscribeListener;
 }
 
 function deferClickToDocumentForLegacyFBSupport(
@@ -686,78 +719,56 @@ function createDispatchListener(
   };
 }
 
-function createDispatchEntry(
-  event: ReactSyntheticEvent,
-  listeners: Array<DispatchListener>,
-): DispatchEntry {
-  return {
-    event,
-    listeners,
-  };
-}
-
 export function accumulateSinglePhaseListeners(
   targetFiber: Fiber | null,
-  dispatchQueue: DispatchQueue,
-  event: ReactSyntheticEvent,
+  reactName: string | null,
+  nativeEventType: string,
   inCapturePhase: boolean,
   accumulateTargetOnly: boolean,
-): void {
-  const bubbled = event._reactName;
-  const captured = bubbled !== null ? bubbled + 'Capture' : null;
+): Array<DispatchListener> {
+  const captureName = reactName !== null ? reactName + 'Capture' : null;  // 捕获阶段合成事件名称
+  const reactEventName = inCapturePhase ? captureName : reactName; // 最终合成事件名称
   const listeners: Array<DispatchListener> = [];
 
   let instance = targetFiber;
   let lastHostComponent = null;
-  const targetType = event.nativeEvent.type;
 
   // Accumulate all instances and listeners via the target -> root path.
   while (instance !== null) {
     const {stateNode, tag} = instance;
-    // Handle listeners that are on HostComponents (i.e. <div>)
+    // Handle listeners that are on HostComponents (i.e. <div>) // 如果是有效节点则获取其事件
     if (tag === HostComponent && stateNode !== null) {
-      const currentTarget = stateNode;
-      lastHostComponent = currentTarget;
-      // For Event Handle listeners
-      if (enableCreateEventHandleAPI) {
-        const eventHandlerlisteners = getEventHandlerListeners(currentTarget);
+      lastHostComponent = stateNode;
 
-        if (eventHandlerlisteners !== null) {
-          const eventHandlerlistenersArr = Array.from(eventHandlerlisteners);
-          for (let i = 0; i < eventHandlerlistenersArr.length; i++) {
-            const {
-              callback,
-              capture: isCapturePhaseListener,
-              type,
-            } = eventHandlerlistenersArr[i];
-            if (type === targetType) {
-              if (isCapturePhaseListener && inCapturePhase) {
-                listeners.push(
-                  createDispatchListener(instance, callback, currentTarget),
-                );
-              } else if (!isCapturePhaseListener && !inCapturePhase) {
-                listeners.push(
-                  createDispatchListener(instance, callback, currentTarget),
-                );
-              }
+      // createEventHandle listeners
+      if (enableCreateEventHandleAPI) {
+        const eventHandlerListeners = getEventHandlerListeners(
+          lastHostComponent,
+        );
+        if (eventHandlerListeners !== null) {
+          eventHandlerListeners.forEach(entry => {
+            if (
+              entry.type === nativeEventType &&
+              entry.capture === inCapturePhase
+            ) {
+              listeners.push(
+                createDispatchListener(
+                  instance,
+                  entry.callback,
+                  (lastHostComponent: any),
+                ),
+              );
             }
-          }
+          });
         }
       }
-      // Standard React on* listeners, i.e. onClick prop
-      if (captured !== null && inCapturePhase) {
-        const captureListener = getListener(instance, captured);
-        if (captureListener != null) {
-          listeners.push(
-            createDispatchListener(instance, captureListener, currentTarget),
-          );
-        }
-      }
-      if (bubbled !== null && !inCapturePhase) {
-        const bubbleListener = getListener(instance, bubbled);
-        if (bubbleListener != null) {
-          listeners.push(
-            createDispatchListener(instance, bubbleListener, currentTarget),
+
+      // Standard React on* listeners, i.e. onClick or onClickCapture
+      if (reactEventName !== null) {
+        const listener = getListener(instance, reactEventName); // 获取存储在 Fiber 节点上 Props 里的对应事件（如果存在）
+        if (listener != null) {
+          listeners.push( // 入队
+            createDispatchListener(instance, listener, lastHostComponent),  // 简单返回一个 {instance, listener, lastHostComponent} 对象
           );
         }
       }
@@ -768,45 +779,37 @@ export function accumulateSinglePhaseListeners(
       lastHostComponent !== null &&
       stateNode !== null
     ) {
+      // Scopes
       const reactScopeInstance = stateNode;
-      const eventHandlerlisteners = getEventHandlerListeners(
+      const eventHandlerListeners = getEventHandlerListeners(
         reactScopeInstance,
       );
-      const lastCurrentTarget = ((lastHostComponent: any): Element);
-
-      if (eventHandlerlisteners !== null) {
-        const eventHandlerlistenersArr = Array.from(eventHandlerlisteners);
-        for (let i = 0; i < eventHandlerlistenersArr.length; i++) {
-          const {
-            callback,
-            capture: isCapturePhaseListener,
-            type,
-          } = eventHandlerlistenersArr[i];
-          if (type === targetType) {
-            if (isCapturePhaseListener && inCapturePhase) {
-              listeners.push(
-                createDispatchListener(instance, callback, lastCurrentTarget),
-              );
-            } else if (!isCapturePhaseListener && !inCapturePhase) {
-              listeners.push(
-                createDispatchListener(instance, callback, lastCurrentTarget),
-              );
-            }
+      if (eventHandlerListeners !== null) {
+        eventHandlerListeners.forEach(entry => {
+          if (
+            entry.type === nativeEventType &&
+            entry.capture === inCapturePhase
+          ) {
+            listeners.push(
+              createDispatchListener(
+                instance,
+                entry.callback,
+                (lastHostComponent: any),
+              ),
+            );
           }
-        }
+        });
       }
     }
     // If we are only accumulating events for the target, then we don't
     // continue to propagate through the React fiber tree to find other
     // listeners.
-    if (accumulateTargetOnly) {
+    if (accumulateTargetOnly) {  // scroll 不会冒泡，获取一次就结束了
       break;
     }
     instance = instance.return;
   }
-  if (listeners.length !== 0) {
-    dispatchQueue.push(createDispatchEntry(event, listeners));
-  }
+  return listeners; // 返回监听器集合
 }
 
 // We should only use this function for:
@@ -818,11 +821,9 @@ export function accumulateSinglePhaseListeners(
 // phase event listeners (via emulation).
 export function accumulateTwoPhaseListeners(
   targetFiber: Fiber | null,
-  dispatchQueue: DispatchQueue,
-  event: ReactSyntheticEvent,
-): void {
-  const bubbled = event._reactName;
-  const captured = bubbled !== null ? bubbled + 'Capture' : null;
+  reactName: string,
+): Array<DispatchListener> {
+  const captureName = reactName + 'Capture';
   const listeners: Array<DispatchListener> = [];
   let instance = targetFiber;
 
@@ -832,29 +833,22 @@ export function accumulateTwoPhaseListeners(
     // Handle listeners that are on HostComponents (i.e. <div>)
     if (tag === HostComponent && stateNode !== null) {
       const currentTarget = stateNode;
-      // Standard React on* listeners, i.e. onClick prop
-      if (captured !== null) {
-        const captureListener = getListener(instance, captured);
-        if (captureListener != null) {
-          listeners.unshift(
-            createDispatchListener(instance, captureListener, currentTarget),
-          );
-        }
+      const captureListener = getListener(instance, captureName);
+      if (captureListener != null) {
+        listeners.unshift(
+          createDispatchListener(instance, captureListener, currentTarget),
+        );
       }
-      if (bubbled !== null) {
-        const bubbleListener = getListener(instance, bubbled);
-        if (bubbleListener != null) {
-          listeners.push(
-            createDispatchListener(instance, bubbleListener, currentTarget),
-          );
-        }
+      const bubbleListener = getListener(instance, reactName);
+      if (bubbleListener != null) {
+        listeners.push(
+          createDispatchListener(instance, bubbleListener, currentTarget),
+        );
       }
     }
     instance = instance.return;
   }
-  if (listeners.length !== 0) {
-    dispatchQueue.push(createDispatchEntry(event, listeners));
-  }
+  return listeners;
 }
 
 function getParent(inst: Fiber | null): Fiber | null {
@@ -917,15 +911,12 @@ function getLowestCommonAncestor(instA: Fiber, instB: Fiber): Fiber | null {
 
 function accumulateEnterLeaveListenersForEvent(
   dispatchQueue: DispatchQueue,
-  event: ReactSyntheticEvent,
+  event: KnownReactSyntheticEvent,
   target: Fiber,
   common: Fiber | null,
   inCapturePhase: boolean,
 ): void {
   const registrationName = event._reactName;
-  if (registrationName === undefined) {
-    return;
-  }
   const listeners: Array<DispatchListener> = [];
 
   let instance = target;
@@ -958,7 +949,7 @@ function accumulateEnterLeaveListenersForEvent(
     instance = instance.return;
   }
   if (listeners.length !== 0) {
-    dispatchQueue.push(createDispatchEntry(event, listeners));
+    dispatchQueue.push({event, listeners});
   }
 }
 
@@ -969,8 +960,8 @@ function accumulateEnterLeaveListenersForEvent(
 // phase event listeners.
 export function accumulateEnterLeaveTwoPhaseListeners(
   dispatchQueue: DispatchQueue,
-  leaveEvent: ReactSyntheticEvent,
-  enterEvent: null | ReactSyntheticEvent,
+  leaveEvent: KnownReactSyntheticEvent,
+  enterEvent: null | KnownReactSyntheticEvent,
   from: Fiber | null,
   to: Fiber | null,
 ): void {
@@ -997,48 +988,26 @@ export function accumulateEnterLeaveTwoPhaseListeners(
 }
 
 export function accumulateEventHandleNonManagedNodeListeners(
-  dispatchQueue: DispatchQueue,
-  event: ReactSyntheticEvent,
+  reactEventType: DOMEventName,
   currentTarget: EventTarget,
   inCapturePhase: boolean,
-): void {
+): Array<DispatchListener> {
   const listeners: Array<DispatchListener> = [];
 
   const eventListeners = getEventHandlerListeners(currentTarget);
   if (eventListeners !== null) {
-    const listenersArr = Array.from(eventListeners);
-    const targetType = ((event.type: any): DOMEventName);
-
-    for (let i = 0; i < listenersArr.length; i++) {
-      const listener = listenersArr[i];
-      const {callback, capture: isCapturePhaseListener, type} = listener;
-      if (type === targetType) {
-        if (inCapturePhase && isCapturePhaseListener) {
-          listeners.push(createDispatchListener(null, callback, currentTarget));
-        } else if (!inCapturePhase && !isCapturePhaseListener) {
-          listeners.push(createDispatchListener(null, callback, currentTarget));
-        }
+    eventListeners.forEach(entry => {
+      if (entry.type === reactEventType && entry.capture === inCapturePhase) {
+        listeners.push(
+          createDispatchListener(null, entry.callback, currentTarget),
+        );
       }
-    }
+    });
   }
-  if (listeners.length !== 0) {
-    dispatchQueue.push(createDispatchEntry(event, listeners));
-  }
+  return listeners;
 }
 
-export function addEventTypeToDispatchConfig(type: DOMEventName): void {
-  const reactName = topLevelEventsToReactNames.get(type);
-  // If we don't have a reactName, then we're dealing with
-  // an event type that React does not know about (i.e. a custom event).
-  // We need to register an event config for this or the SimpleEventPlugin
-  // will not appropriately provide a SyntheticEvent, so we use out empty
-  // dispatch config for custom events.
-  if (reactName === undefined) {
-    topLevelEventsToReactNames.set(type, null);
-  }
-}
-
-export function getListenerMapKey(
+export function getListenerSetKey(
   domEventName: DOMEventName,
   capture: boolean,
 ): string {

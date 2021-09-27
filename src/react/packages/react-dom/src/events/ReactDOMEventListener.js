@@ -8,7 +8,6 @@
  */
 
 import type {AnyNativeEvent} from '../events/PluginModuleType';
-import type {EventPriority} from 'shared/ReactTypes';
 import type {FiberRoot} from 'react-reconciler/src/ReactInternalTypes';
 import type {Container, SuspenseInstance} from '../client/ReactDOMHostConfig';
 import type {DOMEventName} from '../events/DOMEventNames';
@@ -32,6 +31,7 @@ import {
 import {HostRoot, SuspenseComponent} from 'react-reconciler/src/ReactWorkTags';
 import {
   type EventSystemFlags,
+  IS_CAPTURE_PHASE,
   IS_LEGACY_FB_SUPPORT_MODE,
 } from './EventSystemFlags';
 
@@ -40,6 +40,7 @@ import {getClosestInstanceFromNode} from '../client/ReactDOMComponentTree';
 
 import {
   enableLegacyFBSupport,
+  enableEagerRootListeners,
   decoupleUpdatePriorityFromScheduler,
 } from 'shared/ReactFeatureFlags';
 import {
@@ -89,19 +90,15 @@ export function createEventListenerWrapper(
     targetContainer,
   );
 }
-
+// 按照事件名称，划分事件执行的优先级，处理后返回监听函数
 export function createEventListenerWrapperWithPriority(
   targetContainer: EventTarget,
   domEventName: DOMEventName,
-  eventSystemFlags: EventSystemFlags,
-  priority?: EventPriority,
+  eventSystemFlags: EventSystemFlags,  
 ): Function {
-  const eventPriority =
-    priority === undefined
-      ? getEventPriorityForPluginSystem(domEventName)
-      : priority;
+  const eventPriority = getEventPriorityForPluginSystem(domEventName);  // eventPriorities 中获取当前原生事件的优先级
   let listenerWrapper;
-  switch (eventPriority) {
+  switch (eventPriority) {  // 根据不同的优先级提供不同的监听函数
     case DiscreteEvent:
       listenerWrapper = dispatchDiscreteEvent;
       break;
@@ -113,6 +110,9 @@ export function createEventListenerWrapperWithPriority(
       listenerWrapper = dispatchEvent;
       break;
   }
+  // 三类监听器的入参其实一样，其函数签名均为：
+  // (domEventName: DOMEventName, eventSystemFlags: EventSystemFlags, targetContainer: EventTarget, nativeEvent: AnyNativeEvent) => void
+  // 前三个参数由当前函数提供，最后一个参数便是原生监听器会拥有的唯一入参 Event 对象
   return listenerWrapper.bind(
     null,
     domEventName,
@@ -132,10 +132,10 @@ function dispatchDiscreteEvent(
     // If we are in Legacy FB support mode, it means we've already
     // flushed for this event and we don't need to do it again.
     (eventSystemFlags & IS_LEGACY_FB_SUPPORT_MODE) === 0
-  ) {
-    flushDiscreteUpdatesIfNeeded(nativeEvent.timeStamp);
+  ) {  // flushDiscreteUpdatesIfNeeded 的作用是清除先前积攒的为执行的离散任务，包括但不限于之前触发的离散事件 和 useEffect 的回调，
+    flushDiscreteUpdatesIfNeeded(nativeEvent.timeStamp);  // 主要为了保证当前离散事件所对应的状态时最新的
   }
-  discreteUpdates(
+  discreteUpdates(  // 新建一个离散更新
     dispatchEvent,
     domEventName,
     eventSystemFlags,
@@ -191,10 +191,24 @@ export function dispatchEvent(
   if (!_enabled) {
     return;
   }
-  if (hasQueuedDiscreteEvents() && isReplayableDiscreteEvent(domEventName)) {
-    // If we already have a queue of discrete events, and this is another discrete
-    // event, then we can't dispatch it regardless of its target, since they
-    // need to dispatch in order.
+  let allowReplay = true;
+  if (enableEagerRootListeners) {
+    // TODO: replaying capture phase events is currently broken
+    // because we used to do it during top-level native bubble handlers
+    // but now we use different bubble and capture handlers.
+    // In eager mode, we attach capture listeners early, so we need
+    // to filter them out until we fix the logic to handle them correctly.
+    // This could've been outside the flag but I put it inside to reduce risk.
+    allowReplay = (eventSystemFlags & IS_CAPTURE_PHASE) === 0;
+  }
+  if (
+    allowReplay &&
+    hasQueuedDiscreteEvents() &&
+    isReplayableDiscreteEvent(domEventName)
+  ) {
+    //如果我们已经有一个离散事件队列，这是另一个离散事件
+    //那么无论目标是什么，我们都不能发送它，因为它们
+    //需要按顺序发送。
     queueDiscreteEvent(
       null, // Flags that we're not actually blocked on anything as far as we know.
       domEventName,
@@ -214,37 +228,39 @@ export function dispatchEvent(
 
   if (blockedOn === null) {
     // We successfully dispatched this event.
+    if (allowReplay) {
+      clearIfContinuousEvent(domEventName, nativeEvent);
+    }
+    return;
+  }
+
+  if (allowReplay) {
+    if (isReplayableDiscreteEvent(domEventName)) {
+      // This this to be replayed later once the target is available.
+      queueDiscreteEvent(
+        blockedOn,
+        domEventName,
+        eventSystemFlags,
+        targetContainer,
+        nativeEvent,
+      );
+      return;
+    }
+    if (
+      queueIfContinuousEvent(
+        blockedOn,
+        domEventName,
+        eventSystemFlags,
+        targetContainer,
+        nativeEvent,
+      )
+    ) {
+      return;
+    }
+    // We need to clear only if we didn't queue because
+    // queueing is accummulative.
     clearIfContinuousEvent(domEventName, nativeEvent);
-    return;
   }
-
-  if (isReplayableDiscreteEvent(domEventName)) {
-    // This this to be replayed later once the target is available.
-    queueDiscreteEvent(
-      blockedOn,
-      domEventName,
-      eventSystemFlags,
-      targetContainer,
-      nativeEvent,
-    );
-    return;
-  }
-
-  if (
-    queueIfContinuousEvent(
-      blockedOn,
-      domEventName,
-      eventSystemFlags,
-      targetContainer,
-      nativeEvent,
-    )
-  ) {
-    return;
-  }
-
-  // We need to clear only if we didn't queue because
-  // queueing is accummulative.
-  clearIfContinuousEvent(domEventName, nativeEvent);
 
   // This is not replayable so we'll invoke it but without a target,
   // in case the event system needs to trace it.
@@ -265,7 +281,8 @@ export function attemptToDispatchEvent(
   nativeEvent: AnyNativeEvent,
 ): null | Container | SuspenseInstance {
   // TODO: Warn if _enabled is false.
-
+  //将nativeTarget和v-dom中的node对应上
+  //react会在每个渲染后的真实dom上的每个HTMLElement都设置一个相同的随机属性名，方便对应和查找
   const nativeEventTarget = getEventTarget(nativeEvent);
   let targetInst = getClosestInstanceFromNode(nativeEventTarget);
 

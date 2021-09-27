@@ -86,22 +86,18 @@
 
 import type {Fiber} from './ReactInternalTypes';
 import type {Lanes, Lane} from './ReactFiberLane';
-import type {SuspenseConfig} from './ReactFiberSuspenseConfig';
 
 import {NoLane, NoLanes, isSubsetOfLanes, mergeLanes} from './ReactFiberLane';
 import {
   enterDisallowedContextReadInDEV,
   exitDisallowedContextReadInDEV,
 } from './ReactFiberNewContext.old';
-import {Callback, ShouldCapture, DidCapture} from './ReactSideEffectTags';
+import {Callback, ShouldCapture, DidCapture} from './ReactFiberFlags';
 
 import {debugRenderPhaseSideEffectsForStrictMode} from 'shared/ReactFeatureFlags';
 
 import {StrictMode} from './ReactTypeOfMode';
-import {
-  markRenderEventTimeAndConfig,
-  markSkippedUpdateLanes,
-} from './ReactFiberWorkLoop.old';
+import {markSkippedUpdateLanes} from './ReactFiberWorkLoop.old';
 
 import invariant from 'shared/invariant';
 
@@ -112,7 +108,6 @@ export type Update<State> = {|
   // transition -> event time on the root.
   eventTime: number,
   lane: Lane,
-  suspenseConfig: null | SuspenseConfig,
 
   tag: 0 | 1 | 2 | 3,
   payload: any,
@@ -186,15 +181,10 @@ export function cloneUpdateQueue<State>(
   }
 }
 
-export function createUpdate(
-  eventTime: number,
-  lane: Lane,
-  suspenseConfig: null | SuspenseConfig,
-): Update<*> {
+export function createUpdate(eventTime: number, lane: Lane): Update<*> {
   const update: Update<*> = {
     eventTime,
     lane,
-    suspenseConfig,
 
     tag: UpdateState,
     payload: null,
@@ -208,14 +198,14 @@ export function createUpdate(
 export function enqueueUpdate<State>(fiber: Fiber, update: Update<State>) {
   const updateQueue = fiber.updateQueue;
   if (updateQueue === null) {
-    // Only occurs if the fiber has been unmounted. 只会发生在fiber节点注销的时候
+    // Only occurs if the fiber has been unmounted.
     return;
   }
 
   const sharedQueue: SharedQueue<State> = (updateQueue: any).shared;
   const pending = sharedQueue.pending;
   if (pending === null) {
-    // This is the first update. Create a circular list.  这是第一次更新，创建一个循环单链表
+    // This is the first update. Create a circular list.
     update.next = update;
   } else {
     update.next = pending.next;
@@ -269,7 +259,6 @@ export function enqueueCapturedUpdate<State>(
           const clone: Update<State> = {
             eventTime: update.eventTime,
             lane: update.lane,
-            suspenseConfig: update.suspenseConfig,
 
             tag: update.tag,
             payload: update.payload,
@@ -356,8 +345,8 @@ function getStateFromUpdate<State>(
       return payload;
     }
     case CaptureUpdate: {
-      workInProgress.effectTag =
-        (workInProgress.effectTag & ~ShouldCapture) | DidCapture;
+      workInProgress.flags =
+        (workInProgress.flags & ~ShouldCapture) | DidCapture;
     }
     // Intentional fallthrough
     case UpdateState: {
@@ -420,13 +409,13 @@ export function processUpdateQueue<State>(
   let firstBaseUpdate = queue.firstBaseUpdate;
   let lastBaseUpdate = queue.lastBaseUpdate;
 
-  // 检查是否有待处理的更新。如果是这样，请将它们转移到基本队列
+  // Check if there are pending updates. If so, transfer them to the base queue.
   let pendingQueue = queue.shared.pending;
   if (pendingQueue !== null) {
     queue.shared.pending = null;
 
     // The pending queue is circular. Disconnect the pointer between first
-    // and last so that it's non-circular. pending队列是循环的，先断开连接，在连接上
+    // and last so that it's non-circular.
     const lastPendingUpdate = pendingQueue;
     const firstPendingUpdate = lastPendingUpdate.next;
     lastPendingUpdate.next = null;
@@ -441,8 +430,8 @@ export function processUpdateQueue<State>(
     // If there's a current queue, and it's different from the base queue, then
     // we need to transfer the updates to that queue, too. Because the base
     // queue is a singly-linked list with no cycles, we can append to both
-    // lists and take advantage of structural sharing. 如果当前队列与基本队列不同，则我们也需要将更新转移到该队列
-    // TODO: Pass `current` as argument  
+    // lists and take advantage of structural sharing.
+    // TODO: Pass `current` as argument
     const current = workInProgress.alternate;
     if (current !== null) {
       // This is always non-null on a ClassComponent or HostRoot
@@ -459,10 +448,10 @@ export function processUpdateQueue<State>(
     }
   }
 
-  // These values may change as we process the queue. 这些值在我们处理队列时可能会更改。
+  // These values may change as we process the queue.
   if (firstBaseUpdate !== null) {
-    // Iterate through the list of updates to compute the result. 遍历更新列表以计算结果。
-    let newState = queue.baseState;  
+    // Iterate through the list of updates to compute the result.
+    let newState = queue.baseState;
     // TODO: Don't need to accumulate this. Instead, we can remove renderLanes
     // from the original lanes.
     let newLanes = NoLanes;
@@ -478,11 +467,10 @@ export function processUpdateQueue<State>(
       if (!isSubsetOfLanes(renderLanes, updateLane)) {
         // Priority is insufficient. Skip this update. If this is the first
         // skipped update, the previous update/state is the new base
-        // update/state.  优先级不足 跳过此更新如果这是第一个跳过更新，以前的更新/状态是新的基础更新/状态。
+        // update/state.
         const clone: Update<State> = {
           eventTime: updateEventTime,
           lane: updateLane,
-          suspenseConfig: update.suspenseConfig,
 
           tag: update.tag,
           payload: update.payload,
@@ -508,7 +496,6 @@ export function processUpdateQueue<State>(
             // it. Using NoLane works because 0 is a subset of all bitmasks, so
             // this will never be skipped by the check above.
             lane: NoLane,
-            suspenseConfig: update.suspenseConfig,
 
             tag: update.tag,
             payload: update.payload,
@@ -518,14 +505,6 @@ export function processUpdateQueue<State>(
           };
           newLastBaseUpdate = newLastBaseUpdate.next = clone;
         }
-
-        // Mark the event time of this update as relevant to this render pass.
-        // TODO: This should ideally use the true event time of this update rather than
-        // its priority which is a derived and not reversible value.
-        // TODO: We should skip this update if it was already committed but currently
-        // we have no way of detecting the difference between a committed and suspended
-        // update here.
-        markRenderEventTimeAndConfig(updateEventTime, update.suspenseConfig);
 
         // Process this update.
         newState = getStateFromUpdate(
@@ -538,7 +517,7 @@ export function processUpdateQueue<State>(
         );
         const callback = update.callback;
         if (callback !== null) {
-          workInProgress.effectTag |= Callback;
+          workInProgress.flags |= Callback;
           const effects = queue.effects;
           if (effects === null) {
             queue.effects = [update];

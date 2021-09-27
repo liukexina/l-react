@@ -7,7 +7,7 @@
  * @flow
  */
 
-/* eslint-disable react-internal/invariant-args */
+
 
 import invariant from 'shared/invariant';
 

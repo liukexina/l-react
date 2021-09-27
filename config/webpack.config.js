@@ -62,17 +62,16 @@ const sassRegex = /\.(scss|sass)$/;
 const sassModuleRegex = /\.module\.(scss|sass)$/;
 
 const hasJsxRuntime = (() => {
-  // if (process.env.DISABLE_NEW_JSX_TRANSFORM === 'true') {
-  //   return false;
-  // }
+  if (process.env.DISABLE_NEW_JSX_TRANSFORM === 'true') {
+    return false;
+  }
 
-  // try {
-  //   require.resolve('react/jsx-runtime');
-  //   return true;
-  // } catch (e) {
-  //   return false;
-  // }
-  return false;
+  try {
+    require.resolve('react/jsx-runtime');
+    return true;
+  } catch (e) {
+    return false;
+  }
 })();
 
 // This is the production and development configuration.
@@ -326,16 +325,17 @@ module.exports = function (webpackEnv) {
         // Support React Native Web
         // https://www.smashingmagazine.com/2016/08/a-glimpse-into-the-future-with-react-native-for-web/
         'react-native': 'react-native-web',
-        // Allows for better profiling with ReactDevTools
-        // ...(isEnvProductionProfile && {
-        //   'react-dom$': 'react-dom/profiling',
-        //   'scheduler/tracing': 'scheduler/tracing-profiling',
-        // }),
-        // ...(modules.webpackAliases || {}),
         'react': path.resolve(__dirname, '../src/react/packages/react'),
         'react-dom': path.resolve(__dirname, '../src/react/packages/react-dom'),
         'shared': path.resolve(__dirname, '../src/react/packages/shared'),
         'react-reconciler': path.resolve(__dirname, '../src/react/packages/react-reconciler'),
+        "legacy-events": path.resolve(__dirname, "../src/react/packages/legacy-events"),
+        // Allows for better profiling with ReactDevTools
+        ...(isEnvProductionProfile && {
+          'react-dom$': 'react-dom/profiling',
+          'scheduler/tracing': 'scheduler/tracing-profiling',
+        }),
+        ...(modules.webpackAliases || {}),
       },
       plugins: [
         // Adds support for installing with Plug'n'Play, leading to faster installs and adding
@@ -728,7 +728,7 @@ module.exports = function (webpackEnv) {
           extends: [require.resolve('eslint-config-react-app/base')],
           rules: {
             ...(!hasJsxRuntime && {
-              // 'react/react-in-jsx-scope': 'error',
+              'react/react-in-jsx-scope': 'error',
             }),
           },
         },
